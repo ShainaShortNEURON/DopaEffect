@@ -1,0 +1,252 @@
+---
+title: "Model Documentation"
+subtitle: "Pharmacokinetics of Methamphetamine in Humans"
+author: Peter Bloomingdale
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+    pdf:
+        toc: true
+        number-sections: true
+bibliography: references.bib
+csl: nature.csl
+---
+
+{{< pagebreak >}}
+
+# Model Objectives
+
+- Develop a PK model for methamphetamine in humans
+
+{{< pagebreak >}}
+
+# Data
+
+Fig 2A in Mendelson (2006) was digitized using webplot digitizers. CSV was exported, column for dose was added 0.25 mg/kg and 0.5 mg/kg. Times in hours were rounded to two decimal places. @mendelson2006human
+
+```{r, echo=FALSE}
+library(knitr)
+data <- data.frame(Data = c("Human PK Data"),
+                   Filename = c("Fig2A_Mendelson_2006.csv"),
+                   Source = c("Mendelson 2006"),
+                   PMID = c("17015058"))
+kable(data, align ="c", caption = "Pharmacokinetic Data")
+```
+
+
+{{< pagebreak >}}
+
+# Model Development
+
+The model was developed by coding a one-compartment PK model in MRGsolve. The model was parameterized using literature values for clearance and volume of distribution, which were derived from noncompartmental analysis @mendelson2006human. The model was validated by simulating the model with the same dose and regimen as the observed data. Model predictions compared against observations are depcited in Figure 1 below. The model was then used to simulate various doses of methamphetamine in humans. The model then was applied to perform simulations of mulitple acending methamphetamine doses ranging from 0.03 to 3 mg/kg in humans. The results are shown in Figure 2 below. 
+
+{{< pagebreak >}}
+
+## Structure
+
+One compartment PK model in MRGsolve
+
+\begin{equation} 
+  dA/dt = -CL/V \cdot A
+\end{equation}
+
+\begin{equation}
+  C = A/V 
+\end{equation} 
+
+
+## Parameters
+
+```{r, echo=FALSE}
+data <- data.frame(Parameter = c("CL", "V"),
+                   Units = c(0.257, 3.73),
+                   Value = c("L/h/kg","L/kg"),
+                   Source = c("Literature", "Literature"),
+                   PMID =  c("17015058", "17015058"))
+kable(data, caption = "Example Parameter Table")
+```
+
+## Assumptions
+
+None
+
+{{< pagebreak >}}
+
+
+# Model Validation
+
+```{r, echo=FALSE}
+setwd("/Users/peterbloomingdale/Manuscripts/Neuro_Tutorial_PKPD/model/documentation")
+
+library(mrgsolve)
+library(ggplot2)
+library(tidyverse)
+```
+
+```{r, echo=FALSE}
+# Load data
+data <- read.csv("../data/Fig2A_Mendelson_2006.csv")
+
+# Useful Functions
+convert_to_long_format = function(sim_out, compartments = NULL) {
+  long_format = as.data.frame(sim_out) %>%
+    pivot_longer(
+      -c(time, ID),
+      names_to = "Compartment",
+      values_to = "Concentration"
+    )
+
+  if (!is.null(compartments)) {
+    long_format = long_format %>%
+      filter(Compartment %in% compartments)
+  }
+
+  return(long_format)
+}
+```
+
+```{r}
+# Build model
+model_1CM = mread("../code/1CM.cpp")
+model_2CM = mread("../code/2CM.cpp")
+```
+
+```{r}
+# Define Parameters
+params_1CM_human = list(BW = 70, TVVC = 3.73 * 1000, TVCL = 0.257 * 1000)
+model_1CM_human = param(model_1CM, params_1CM_human)
+
+params_2CM_human = list(BW = 70, TVVC = 3.73 * 1000, TVVP = 20, TVCL = 0.257 * 1000, TVQ = 5)
+model_2CM_human = param(model_2CM, params_2CM_human)
+
+# Define Dose
+Human_BW_kg = 70
+dose_025mgkg = 0.25
+dose_25mg = dose_025mgkg * Human_BW_kg
+dose_050mgkg = 0.5
+dose_50mg = dose_050mgkg * Human_BW_kg
+
+mg2ng = 1000000
+dose_25e6ng = dose_25mg * mg2ng
+dose_50e6ng = dose_50mg * mg2ng
+rate = 0
+
+
+
+# Define model, events, times, regimen
+events_25mg = ev_expand(amt = dose_25e6ng, ii = 0, addl = 0, cmt = 1, rate = 0)
+events_50mg = ev_expand(amt = dose_50e6ng, ii = 0, addl = 0, cmt = 1, rate = 0)
+times = tgrid(0, 48, 0.01)
+```
+
+```{r}
+# Simulate model
+sim_025mgkg = mrgsim(model_1CM_human, events_25mg, tgrid = times)
+sim_050mgkg = mrgsim(model_1CM_human, events_50mg, tgrid = times)
+
+# Convert to Long format (needed for plotting)
+sim_025mgkg_long = convert_to_long_format(sim_025mgkg, compartments = "CP")
+sim_050mgkg_long = convert_to_long_format(sim_050mgkg, compartments = "CP")
+
+# Combine data and simulation
+sim_025mgkg_long$Dose = "0.25 mg/kg"
+sim_050mgkg_long$Dose = "0.50 mg/kg"
+combined_data = rbind(sim_025mgkg_long, sim_050mgkg_long)
+```
+
+```{r, fig.cap="Methamphetamine Pharmacokinetics in Human"}
+# Plot data
+ggplot() +
+  geom_point(data=data, aes(x = Time_h, y = PlasmaConc_ngmL, color = Dose_mgkg, group = Dose_mgkg)) +
+  geom_line(data=combined_data, aes(x = time, y = Concentration, color = Dose, group = Dose), size = 1.5) +
+  labs(x = "Time (h)", y = "Plasma Concentration (ng/mL)") +
+  theme_minimal()
+```
+
+
+
+
+
+{{< pagebreak >}}
+
+# Model Application
+
+## Simulations of Methamphetamine Doses
+
+```{r}
+# Define doses in mg/kg
+dose_levels = c(0.03, 0.1, 0.3, 1, 3)
+human_bw_kg = 70
+
+# Function to run simulation for a given dose
+run_simulation <- function(dose_mgkg) {
+  dose_mg = dose_mgkg * human_bw_kg  # Convert mg/kg to mg
+  dose_ng = dose_mg * 1e6  # Convert mg to ng
+
+  # Create an event object for the dose
+  events = ev(amt = dose_ng, ii = 24, addl = 2, cmt = 1, rate = 0)  # Assuming administration every 24 hours, repeated once
+
+  # Simulate
+  sim_out = mrgsim(model_1CM_human, events, end = 72, delta = 0.1)
+
+  # Convert to long format for plotting using the existing function
+  sim_out_long <- convert_to_long_format(sim_out, compartments = "CP") %>%
+    mutate(Dose = paste(dose_mgkg, "mg/kg"))
+
+  return(sim_out_long)
+}
+
+# Run simulations for all doses
+simulation_results = purrr::map_df(dose_levels, run_simulation)
+```
+
+```{r, fig.cap="Predicted Methamphetamine Pharmacokinetics in Humans"}
+# Plotting the results
+ggplot(simulation_results, aes(x = time, y = Concentration, color = Dose, group = Dose)) +
+  geom_line(size = 1.5) +
+  scale_y_log10() +
+  labs(x = "Time (hours)", y = "Plasma Concentration (ng/mL)") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+
+```
+
+
+
+## Receptor Binding Model
+
+
+
+{{< pagebreak >}}
+
+# Model Accessibility and Useability
+
+* Model available in github repo: [Model Repo - Placehoder](...)
+
+{{< pagebreak >}}
+
+# Acknowledgements
+
+This report was generated using [Quarto](https://quarto.org), a scientific and technical publishing system built on Pandoc. The template used for this document is based on the *moDoc* template, which can be found at the following [GitHub repository](https://github.com/PeterBloomingdale/moDoc).
+
+{{< pagebreak >}}
+
+# References
+
+:::{#refs}
+
+:::
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
