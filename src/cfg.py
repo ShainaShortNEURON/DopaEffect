@@ -8,6 +8,8 @@ patient = 0
 ###############################################################################
 simConfig = specs.SimConfig()
 
+simConfig.patient = 0
+
 simConfig.duration = Tfinal
 simConfig.dt = Dt
 simConfig.hParams = {'v_init': -66,'celsius': 23}
